@@ -1,0 +1,20 @@
+{
+  "name": "@adriftdev/k8s-m8",
+  "version": "0.1.0",
+  "description": "Kubernetes Api Wrapper Library",
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "author": "Joshua Tracey <joshua.tracey@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "compile": "rm -rf ./build && yarn tsc",
+    "prepublish": "yarn compile"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^0.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^17.0.23",
+    "typescript": "^4.6.3"
+  }
+}
