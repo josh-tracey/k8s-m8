@@ -1,6 +1,31 @@
+A: w;
+
 import { Transform } from "stream";
 import * as tty from "tty";
-import { V1ContainerState } from "@kubernetes/client-node";
+import {
+  V1ConfigMap,
+  V1ConfigMapList,
+  V1ContainerState,
+  V1CronJobList,
+  V1DaemonSet,
+  V1DaemonSetList,
+  V1Deployment,
+  V1DeploymentList,
+  V1Job,
+  V1JobList,
+  V1Namespace,
+  V1Pod,
+  V1PodList,
+  V1Scale,
+  V1Secret,
+  V1SecretList,
+  V1Service,
+  V1ServiceAccount,
+  V1ServiceAccountList,
+  V1ServiceList,
+  V1StatefulSet,
+  V1StatefulSetList,
+} from "@kubernetes/client-node";
 
 import * as k8s from "@kubernetes/client-node";
 import { Context } from "@kubernetes/client-node/dist/config_types";
@@ -47,7 +72,7 @@ export const FgBlue = "\x1b[34m";
 export const FgGrey = "\x1b[37m";
 
 export const k8sAgent = (api: IK8sApi) => {
-  let namespace: string | undefined = "default";
+  let namespace: string = "default";
 
   const getCurrentNamespace = () => {
     return namespace || "default";
@@ -55,7 +80,7 @@ export const k8sAgent = (api: IK8sApi) => {
 
   const waitForPodReady = (
     name: string,
-    namespace: string,
+    _namespace?: string,
     options?: {
       interval?: number;
       onReady?: (name: string, namespace: string) => void;
@@ -64,195 +89,436 @@ export const k8sAgent = (api: IK8sApi) => {
     return new Promise<void>(async (done, error) => {
       let podReady = false;
       while (!podReady) {
-        const podStatus = (
-          await api.k8sCore.readNamespacedPodStatus(name, namespace)
-        ).body;
-        if (["Ready", "Running"].includes(podStatus.status?.phase!)) {
-          podReady = true;
-        } else if (
-          ["Completed", "Failed", "Terminating"].includes(
-            podStatus.status?.phase!
-          )
-        ) {
-          error("Pods in failed/completed state.");
+        const podStatusResult = await api.k8sCore
+          .readNamespacedPodStatus(name, _namespace || namespace)
+          .catch((err) => {
+            error(`k8sCore.readNamespacedPodStatus => ${err}`);
+          });
+        if (podStatusResult) {
+          const podStatus = podStatusResult.body;
+          if (["Ready", "Running"].includes(podStatus.status?.phase!)) {
+            podReady = true;
+          } else if (
+            ["Completed", "Failed", "Terminating"].includes(
+              podStatus.status?.phase!
+            )
+          ) {
+            error("Pods in failed/completed state.");
+          }
+          sleep(options?.interval || 2000);
         }
-        sleep(options?.interval || 2000);
+        done();
       }
-      done();
     });
   };
 
-  const getPod = (pod: string, namespace: string) => {
-    return api.k8sCore.readNamespacedPod(pod, namespace);
+  const getPod = (pod: string, _namespace?: string) => {
+    return new Promise<V1Pod>(async (done, error) => {
+      const podResult = await api.k8sCore
+        .readNamespacedPod(pod, _namespace || namespace)
+        .catch((err) => {
+          error(`k8sCore.readNamespacedPod => ${err}`);
+        });
+      if (podResult) {
+        done(podResult.body);
+      }
+    });
   };
 
   const execShell = (
     podName: string,
-    namespace: string,
-    shell: string = "bash"
+    shell: string = "bash",
+    _namespace?: string
   ) => {
     return new Promise<void>(async (done, error) => {
       const ttyInput = new tty.ReadStream(0);
       ttyInput.setRawMode(true);
 
-      const pod = await getPod(podName, namespace);
-
-      const containerName = pod.body.spec?.containers[0].name || "";
-
-      const res = await api.k8sExec.exec(
-        namespace,
-        podName,
-        containerName,
-        shell,
-        new tty.WriteStream(1),
-        process.stderr,
-        ttyInput,
-        true /* tty */,
-        () => {
-          done();
+      const pod = await getPod(podName, _namespace || namespace).catch(
+        (err) => {
+          error(`getPod => ${err}`);
         }
       );
 
-      res.on("close", () => {
+      if (!pod) {
+        error("Pod not found.");
+      }
+
+      const containerName = pod!.spec?.containers[0].name || "";
+
+      const res = await api.k8sExec
+        .exec(
+          _namespace || namespace,
+          podName,
+          containerName,
+          shell,
+          new tty.WriteStream(1),
+          process.stderr,
+          ttyInput,
+          true /* tty */,
+          () => {
+            done();
+          }
+        )
+        .catch((err: Error) => {
+          error(`k8sExec.exec => ${err}`);
+        });
+
+      res!.on("close", () => {
         done();
       });
 
-      res.on("error", (err) => {
-        error(err);
+      res!.on("error", (err: Error) => {
+        error(`k8sExec.exec => ${err}`);
       });
     });
   };
 
-  const getNamespaces = async () => {
-    try {
-      return api.k8sCore.listNamespace();
-    } catch (e) {
-      console.log((e as Error).message);
-      return;
-    }
+  const getNamespaces = () => {
+    return new Promise<V1Namespace>(async (done, error) => {
+      const namespacesResult = await api.k8sCore
+        .listNamespace()
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespace => ${err}`);
+        });
+      if (namespacesResult) {
+        done(namespacesResult.body);
+      }
+    });
   };
 
-  const setNamespace = async (nextNamespace: string) => {
+  const setNamespace = (nextNamespace: string) => {
     namespace = nextNamespace;
   };
 
-  const getServices = async (namespace: string) => {
-    try {
-      return api.k8sCore.listNamespacedService(namespace);
-    } catch (e) {
-      console.log((e as Error).message);
-      return;
-    }
-  };
-
-  const getPods = (namespace: string) => {
-    return api.k8sCore.listNamespacedPod(namespace);
-  };
-
-  const getDeployments = async (namespace: string) => {
-    return api.k8sApps.listNamespacedDeployment(namespace);
-  };
-
-  const setScaleDeployment = async (
-    name: string,
-    namespace: string,
-    replicas: number
-  ) => {
-    try {
-      return await api.k8sApps
-        .replaceNamespacedDeploymentScale(name, namespace, {
-          spec: { replicas },
-          metadata: { name, namespace },
-        })
-        .then((response) => response)
-        .catch((error) => {
-          console.log(error);
-          return error;
+  const getServices = (_namespace?: string) => {
+    return new Promise<V1ServiceList>(async (done, error) => {
+      const servicesResult = await api.k8sCore
+        .listNamespacedService(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespacedService => ${err}`);
         });
-    } catch (e) {
-      console.log((e as Error).message);
-      return;
-    }
+      if (servicesResult) {
+        done(servicesResult.body);
+      }
+    });
   };
 
-  const getDeploymentDetails = async (name: string, namespace: string) => {
-    try {
-      return (await api.k8sApps.readNamespacedDeployment(name, namespace)).body;
-    } catch (e) {
-      console.log((e as Error).message);
-      return;
-    }
+  const getPods = (_namespace?: string) => {
+    return new Promise<V1PodList>(async (done, error) => {
+      const podResults = await api.k8sCore
+        .listNamespacedPod(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespacedPod => ${err}`);
+        });
+      if (podResults) {
+        done(podResults.body);
+      }
+    });
+  };
+
+  const getDeployments = (_namespace?: string) => {
+    return new Promise<V1DeploymentList>(async (done, error) => {
+      const deploymentsResult = await api.k8sApps
+        .listNamespacedDeployment(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.listNamespacedDeployment => ${err}`);
+        });
+      if (deploymentsResult) {
+        done(deploymentsResult.body);
+      }
+    });
+  };
+
+  const setScaleDeployment = (
+    name: string,
+    replicas: number,
+    _namespace?: string
+  ) => {
+    return new Promise<V1Scale>(async (done, error) => {
+      const scaleResult = await api.k8sApps
+        .replaceNamespacedDeploymentScale(name, _namespace || namespace, {
+          spec: { replicas },
+          metadata: { name, namespace: _namespace || namespace },
+        })
+        .catch((err: Error) => {
+          error(`k8sApps.replaceNamespacedDeploymentScale => ${err}`);
+        });
+      if (scaleResult) {
+        done(scaleResult.body);
+      }
+    });
+  };
+
+  const getDeploymentDetails = (name: string, _namespace?: string) => {
+    return new Promise<V1Deployment>(async (done, error) => {
+      const deploymentResult = await api.k8sApps
+        .readNamespacedDeployment(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.readNamespacedDeployment => ${err}`);
+        });
+      if (deploymentResult) {
+        done(deploymentResult.body);
+      }
+    });
   };
 
   const getAllDeployments = () => {
-    try {
-      return api.k8sApps.listDeploymentForAllNamespaces();
-    } catch (e) {
-      console.log((e as Error).message);
-      return;
-    }
+    return new Promise<V1DeploymentList>(async (done, error) => {
+      const deploymentsResult = await api.k8sApps
+        .listDeploymentForAllNamespaces()
+        .catch((err: Error) => {
+          error(`k8sApps.listDeploymentForAllNamespaces => ${err}`);
+        });
+      if (deploymentsResult) {
+        done(deploymentsResult.body);
+      }
+    });
   };
 
-  const getSecrets = (namespace: string) => {
-    return api.k8sCore.listNamespacedSecret(namespace);
+  const getSecrets = (_namespace?: string) => {
+    return new Promise<V1SecretList>(async (done, error) => {
+      const secretsResult = await api.k8sCore
+        .listNamespacedSecret(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespacedSecret => ${err}`);
+        });
+      if (secretsResult) {
+        done(secretsResult.body);
+      }
+    });
   };
 
-  const getConfigMaps = (namespace: string) => {
-    return api.k8sCore.listNamespacedConfigMap(namespace);
+  const getConfigMaps = (_namespace?: string) => {
+    return new Promise<V1ConfigMapList>(async (done, error) => {
+      const configMapsResult = await api.k8sCore
+        .listNamespacedConfigMap(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespacedConfigMap => ${err}`);
+        });
+      if (configMapsResult) {
+        done(configMapsResult.body);
+      }
+    });
   };
 
-  const getServiceAccounts = (namespace: string) => {
-    return api.k8sCore.listNamespacedServiceAccount(namespace);
+  const getServiceAccounts = (_namespace?: string) => {
+    return new Promise<V1ServiceAccountList>(async (done, error) => {
+      const serviceAccountsResult = await api.k8sCore
+        .listNamespacedServiceAccount(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespacedServiceAccount => ${err}`);
+        });
+      if (serviceAccountsResult) {
+        done(serviceAccountsResult.body);
+      }
+    });
   };
 
-  const getJobs = (namespace: string) => {
-    return api.k8sBatchV1.listNamespacedJob(namespace);
+  const getJobs = (_namespace?: string) => {
+    return new Promise<V1JobList>(async (done, error) => {
+      const jobsResult = await api.k8sBatchV1
+        .listNamespacedJob(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sBatchV1.listNamespacedJob => ${err}`);
+        });
+      if (jobsResult) {
+        done(jobsResult.body);
+      }
+    });
   };
 
-  const getCronJobs = (namespace: string) => {
-    return api.k8sBatchV1.listNamespacedCronJob(namespace);
+  const getCronJobs = (_namespace?: string) => {
+    return new Promise<V1CronJobList>(async (done, error) => {
+      const cronJobsResult = await api.k8sBatchV1
+        .listNamespacedCronJob(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sBatchV1.listNamespacedCronJob => ${err}`);
+        });
+      if (cronJobsResult) {
+        done(cronJobsResult.body);
+      }
+    });
   };
 
-  const getSecret = async (name: string, namespace: string) => {
-    return (await api.k8sCore.readNamespacedSecret(name, namespace)).body;
+  const getJob = (name: string, _namespace?: string) => {
+    return new Promise<V1Job>(async (done, error) => {
+      const jobResult = await api.k8sBatchV1
+        .readNamespacedJob(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sBatchV1.readNamespacedJob => ${err}`);
+        });
+      if (jobResult) {
+        done(jobResult.body);
+      }
+    });
   };
 
-  const getConfigmap = async (name: string, namespace: string) => {
-    return (await api.k8sCore.readNamespacedConfigMap(name, namespace)).body;
+  const getServiceAccount = (name: string, _namespace?: string) => {
+    return new Promise<V1ServiceAccount>(async (done, error) => {
+      const serviceAccountResult = await api.k8sCore
+        .readNamespacedServiceAccount(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.readNamespacedServiceAccount => ${err}`);
+        });
+      if (serviceAccountResult) {
+        done(serviceAccountResult.body);
+      }
+    });
   };
 
-  const getPodStatus = async (pod: string, namespace: string) => {
-    const podStatus = (
-      await api.k8sCore.readNamespacedPodStatus(pod, namespace)
-    ).body;
-
-    return {
-      podName: pod,
-      phase: colorStatus(podStatus.status?.phase),
-      lastCondition: colorStatus(
-        findState(
-          podStatus.status?.containerStatuses![
-            podStatus.status?.containerStatuses?.length! - 1
-          ].state!
-        )
-      ),
-    };
+  const getDeployment = (name: string, _namespace?: string) => {
+    return new Promise<V1Deployment>(async (done, error) => {
+      const deploymentResult = await api.k8sApps
+        .readNamespacedDeployment(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.readNamespacedDeployment => ${err}`);
+        });
+      if (deploymentResult) {
+        done(deploymentResult.body);
+      }
+    });
   };
 
-  const getServiceProxy = async (service: string, namespace: string) => {
-    return (
-      await api.k8sCore.connectGetNamespacedServiceProxy(service, namespace)
-    ).body;
+  const getDaemonSet = (name: string, _namespace?: string) => {
+    return new Promise<V1DaemonSet>(async (done, error) => {
+      const daemonSetResult = await api.k8sApps
+        .readNamespacedDaemonSet(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.readNamespacedDaemonSet => ${err}`);
+        });
+      if (daemonSetResult) {
+        done(daemonSetResult.body);
+      }
+    });
   };
 
-  const getPodLogs = async (pod: string, namespace: string) => {
+  const getDaemonSets = (_namespace?: string) => {
+    return new Promise<V1DaemonSetList>(async (done, error) => {
+      const daemonSetsResult = await api.k8sApps
+        .listNamespacedDaemonSet(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.listNamespacedDaemonSet => ${err}`);
+        });
+      if (daemonSetsResult) {
+        done(daemonSetsResult.body);
+      }
+    });
+  };
+
+  const getStatefulSet = (name: string, _namespace?: string) => {
+    return new Promise<V1StatefulSet>(async (done, error) => {
+      const statefulSetResult = await api.k8sApps
+        .readNamespacedStatefulSet(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.readNamespacedStatefulSet => ${err}`);
+        });
+      if (statefulSetResult) {
+        done(statefulSetResult.body);
+      }
+    });
+  };
+
+  const getStatefulSets = (_namespace?: string) => {
+    return new Promise<V1StatefulSetList>(async (done, error) => {
+      const statefulSetsResult = await api.k8sApps
+        .listNamespacedStatefulSet(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sApps.listNamespacedStatefulSet => ${err}`);
+        });
+      if (statefulSetsResult) {
+        done(statefulSetsResult.body);
+      }
+    });
+  };
+
+  const getService = (name: string, _namespace?: string) => {
+    return new Promise<V1Service>(async (done, error) => {
+      const serviceResult = await api.k8sCore
+        .readNamespacedService(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.readNamespacedService => ${err}`);
+        });
+      if (serviceResult) {
+        done(serviceResult.body);
+      }
+    });
+  };
+
+  const getSecret = (name: string, _namespace?: string) => {
+    return new Promise<V1Secret>(async (done, error) => {
+      const secretResult = await api.k8sCore
+        .readNamespacedSecret(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.readNamespacedSecret => ${err}`);
+        });
+      if (secretResult) {
+        done(secretResult.body);
+      }
+    });
+  };
+
+  const getConfigmap = (name: string, _namespace?: string) => {
+    return new Promise<V1ConfigMap>(async (done, error) => {
+      const configmapResult = await api.k8sCore
+        .readNamespacedConfigMap(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.readNamespacedConfigMap => ${err}`);
+        });
+      if (configmapResult) {
+        done(configmapResult.body);
+      }
+    });
+  };
+
+  const getPodStatus = (pod: string, _namespace?: string) => {
+    return new Promise<{
+      podName: string;
+      phase: string;
+      lastCondition?: string;
+    }>(async (done, error) => {
+      const podStatusResult = await api.k8sCore
+        .readNamespacedPodStatus(pod, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.readNamespacedPodStatus => ${err}`);
+        });
+      if (podStatusResult) {
+        done({
+          podName: podStatusResult.body!.metadata!.name!,
+          phase: colorStatus(podStatusResult.body.status?.phase),
+          lastCondition: colorStatus(
+            findState(
+              podStatusResult.body.status?.containerStatuses![
+                podStatusResult.body.status?.containerStatuses?.length! - 1
+              ].state!
+            )
+          ),
+        });
+      }
+    });
+  };
+
+  const getServiceProxy = (service: string, _namespace?: string) => {
+    return new Promise<any>(async (done, error) => {
+      const serviceProxyResult = await api.k8sCore
+        .connectGetNamespacedServiceProxy(service, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.connectGetNamespacedServiceProxy => ${err}`);
+        });
+      if (serviceProxyResult) {
+        done(serviceProxyResult.body);
+      }
+    });
+  };
+
+  const getPodLogs = async (pod: string, _namespace?: string) => {
     const logTimestampLOCALRegex = /(\d{4}-\d{2}-\d{2}[A-Z]\d{2}:\d{2}:\d{2}\.\d{1,12}\+\d{2}:\d{2}) (.*)/gu;
     const logTimestampGTCRegex = /(\d{4}-\d{2}-\d{2}[A-Z]\d{2}:\d{2}:\d{2}\.\d{1,12}[A-Z]) (.*)/gu;
     try {
       const logs = (
         await api.k8sCore.readNamespacedPodLog(
           pod,
-          namespace,
+          _namespace || namespace,
           undefined,
           false,
           false,
@@ -291,10 +557,12 @@ export const k8sAgent = (api: IK8sApi) => {
     namespace: string,
     writer: Transform
   ) => {
-    const pod = await api.k8sCore.readNamespacedPod(podName, namespace);
+    const pod = await getPod(podName, namespace).catch((e) => {
+      throw e;
+    });
 
     const streams = await Promise.all(
-      pod.body.spec?.containers.map(async (container) => {
+      pod.spec?.containers.map(async (container) => {
         return api.k8sLogs.log(
           namespace,
           podName,
@@ -310,103 +578,201 @@ export const k8sAgent = (api: IK8sApi) => {
     return streams;
   };
 
-  const showPodDetails = async (namespace: string, name: string) => {
-    const pod = await api.k8sCore.readNamespacedPod(name, namespace);
-    return pod.body;
-  };
-
-  const configMapExists = async (name: string, namespace: string) => {
-    const configMaps = await api.k8sCore.listNamespacedConfigMap(namespace);
-    return !!configMaps.body.items.find(
-      (configmap) => configmap.metadata?.name === name
-    );
-  };
-
-  const createConfigmap = async (
-    name: string,
-    namespace: string,
-    data: { [name: string]: string }
-  ) => {
-    await api.k8sCore.createNamespacedConfigMap(namespace, {
-      data,
-      metadata: { name },
+  const showPodDetails = (name: string, _namespace?: string) => {
+    return new Promise<V1Pod>(async (done, error) => {
+      const podResult = await api.k8sCore
+        .readNamespacedPod(name, _namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.readNamespacedPod => ${err}`);
+        });
+      if (podResult) {
+        done(podResult.body);
+      }
     });
   };
 
-  const updateConfigmap = async (
-    name: string,
-    namespace: string,
-    data: { [name: string]: string }
-  ) => {
-    await api.k8sCore.patchNamespacedConfigMap(
-      name,
-      namespace,
-      {
-        data: data,
-      },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      {
-        headers: {
-          "content-type": "application/merge-patch+json",
-        },
+  const configMapExists = (name: string, _namespace?: string) => {
+    return new Promise<boolean>(async (done, error) => {
+      const configMapsResult = await api.k8sCore
+        .listNamespacedConfigMap(_namespace || namespace)
+        .catch((err: Error) => {
+          error(`k8sCore.listNamespacedConfigMap => ${err}`);
+        });
+      if (configMapsResult) {
+        done(
+          !!configMapsResult.body.items.find(
+            (configmap) => configmap.metadata?.name === name
+          )
+        );
       }
-    );
+    });
+  };
+
+  const createConfigmap = (
+    name: string,
+    data: { [name: string]: string },
+    _namespace?: string
+  ) => {
+    return new Promise<V1ConfigMap>(async (done, error) => {
+      const configmapResult = await api.k8sCore
+        .createNamespacedConfigMap(_namespace || namespace, {
+          data,
+          metadata: { name, namespace: _namespace || namespace },
+        })
+        .catch((err: Error) => {
+          error(`k8sCore.createNamespacedConfigMap => ${err}`);
+        });
+      if (configmapResult) {
+        done(configmapResult.body);
+      }
+    });
+  };
+
+  const updateSecret = (
+    name: string,
+    data: { [name: string]: string },
+    _namespace?: string
+  ) => {
+    return new Promise<V1Secret>(async (done, error) => {
+      const secretResult = await api.k8sCore
+        .replaceNamespacedSecret(name, _namespace || namespace, {
+          data,
+          metadata: { name, namespace: _namespace || namespace },
+        })
+        .catch((err: Error) => {
+          error(`k8sCore.replaceNamespacedSecret => ${err}`);
+        });
+      if (secretResult) {
+        done(secretResult.body);
+      }
+    });
+  };
+
+  const createSecret = (
+    name: string,
+    data: { [name: string]: string },
+    _namespace?: string
+  ) => {
+    return new Promise<V1Secret>(async (done, error) => {
+      const secretResult = await api.k8sCore
+        .createNamespacedSecret(_namespace || namespace, {
+          data,
+          metadata: { name, namespace: _namespace || namespace },
+        })
+        .catch((err: Error) => {
+          error(`k8sCore.createNamespacedSecret => ${err}`);
+        });
+      if (secretResult) {
+        done(secretResult.body);
+      }
+    });
+  };
+
+  const updateConfigmap = (
+    name: string,
+    data: { [name: string]: string },
+    _namespace?: string
+  ) => {
+    return new Promise<V1ConfigMap>(async (done, error) => {
+      const configmapResult = await api.k8sCore
+        .patchNamespacedConfigMap(
+          name,
+          _namespace || namespace,
+          {
+            data: data,
+          },
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            headers: {
+              "content-type": "application/merge-patch+json",
+            },
+          }
+        )
+        .catch((err: Error) => {
+          error(`k8sCore.patchNamespacedConfigMap => ${err}`);
+        });
+      if (configmapResult) {
+        done(configmapResult.body);
+      }
+    });
   };
 
   const deleteResource = (
     resourceType: ResourceType,
-    namespace: string,
-    name: string
+    name: string,
+    _namespace?: string
   ) => {
     if (resourceType === "pods") {
-      return api.k8sCore.deleteNamespacedPod(name, namespace);
+      return api.k8sCore.deleteNamespacedPod(name, _namespace || namespace);
     } else if (resourceType === "deployments") {
-      return api.k8sApps.deleteNamespacedDeployment(name, namespace);
+      return api.k8sApps.deleteNamespacedDeployment(
+        name,
+        _namespace || namespace
+      );
     } else if (resourceType === "daemonsets") {
-      return api.k8sApps.deleteNamespacedDaemonSet(name, namespace);
+      return api.k8sApps.deleteNamespacedDaemonSet(
+        name,
+        _namespace || namespace
+      );
     } else if (resourceType === "services") {
-      return api.k8sCore.deleteNamespacedService(name, namespace);
+      return api.k8sCore.deleteNamespacedService(name, _namespace || namespace);
     } else if (resourceType === "secrets") {
-      return api.k8sCore.deleteNamespacedSecret(name, namespace);
+      return api.k8sCore.deleteNamespacedSecret(name, _namespace || namespace);
     } else if (resourceType === "configMaps") {
-      return api.k8sCore.deleteNamespacedConfigMap(name, namespace);
+      return api.k8sCore.deleteNamespacedConfigMap(
+        name,
+        _namespace || namespace
+      );
     } else if (resourceType === "serviceAccounts") {
-      return api.k8sCore.deleteNamespacedServiceAccount(name, namespace);
+      return api.k8sCore.deleteNamespacedServiceAccount(
+        name,
+        _namespace || namespace
+      );
     }
     return;
   };
 
   return {
-    getNamespaces,
-    getDeployments,
-    getJobs,
-    getCronJobs,
-    getSecret,
-    getConfigmap,
-    getPodStatus,
-    getServiceProxy,
-    getPodLogs,
-    streamLog,
-    showPodDetails,
     configMapExists,
     createConfigmap,
-    updateConfigmap,
+    createSecret,
     deleteResource,
-    getDeploymentDetails,
-    setNamespace,
-    getServiceAccounts,
-    getServices,
-    getPods,
-    getConfigMaps,
-    getSecrets,
-    getAllDeployments,
-    setScaleDeployment,
-    waitForPodReady,
-    getCurrentNamespace,
     execShell,
+    getAllDeployments,
+    getConfigMaps,
+    getConfigmap,
+    getCronJobs,
+    getCurrentNamespace,
+    getDaemonSet,
+    getDaemonSets,
+    getDeployment,
+    getDeploymentDetails,
+    getDeployments,
+    getJob,
+    getJobs,
+    getNamespaces,
+    getPodLogs,
+    getPodStatus,
+    getPods,
+    getSecret,
+    getSecrets,
+    getService,
+    getServiceAccount,
+    getServiceAccounts,
+    getServiceProxy,
+    getServices,
+    getStatefulSet,
+    getStatefulSets,
+    setNamespace,
+    setScaleDeployment,
+    showPodDetails,
+    streamLog,
+    updateConfigmap,
+    updateSecret,
+    waitForPodReady,
   };
 };
 
