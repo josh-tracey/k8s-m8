@@ -71,7 +71,10 @@ export const FgLightGreen = "\x1b[92m";
 export const FgBlue = "\x1b[34m";
 export const FgGrey = "\x1b[37m";
 
-export const k8sAgent = (api: IK8sApi) => {
+export const k8sAgent = (k8config: k8s.KubeConfig) =>
+  Client(getK8sApis(k8config));
+
+export const Client = (api: IK8sApi) => {
   let namespace: string = "default";
 
   const getCurrentNamespace = () => {
