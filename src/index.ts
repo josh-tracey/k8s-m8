@@ -1,5 +1,3 @@
-A: w;
-
 import { Transform } from "stream";
 import * as tty from "tty";
 import {
