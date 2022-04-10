@@ -656,20 +656,16 @@ export const Client = (api: IK8sApi) => {
     _namespace?: string
   ) => {
     return new Promise<V1ConfigMap>(async (done, error) => {
-      let _data
+      let _data = {}
       try {
-        _data = await Promise.resolve(
-          data.reduce(async (acc, { filename, stream }) => {
-            let value = ''
-            for await (const chunk of stream) {
-              value += chunk.toString()
+        for (const file of data) {
+          for await (const chunk of file.stream) {
+            if (!_data[file.filename]) {
+              _data[file.filename] = ''
             }
-            acc[filename] = value
-            return acc
-          }, {})
-        ).catch((e) => {
-          throw new Error(`Failed to read stream => ${e}`)
-        })
+            _data[file.filename] += chunk.toString()
+          }
+        }
       } catch (e) {
         error(e)
       }
@@ -696,23 +692,20 @@ export const Client = (api: IK8sApi) => {
     _namespace?: string
   ) => {
     return new Promise<V1ConfigMap>(async (done, error) => {
-      let _data
+      let _data = {}
       try {
-        _data = await Promise.resolve(
-          data.reduce(async (acc, { filename, stream }) => {
-            let value = ''
-            for await (const chunk of stream) {
-              value += chunk.toString()
+        for (const file of data) {
+          for await (const chunk of file.stream) {
+            if (!_data[file.filename]) {
+              _data[file.filename] = ''
             }
-            acc[filename] = value
-            return acc
-          }, {})
-        ).catch((e) => {
-          throw new Error(`Failed to read stream => ${e}`)
-        })
+            _data[file.filename] += chunk.toString()
+          }
+        }
       } catch (e) {
         error(e)
       }
+
       const _name = Case.kebab(name)
 
       const configmapResult = await api.k8sCore
@@ -724,7 +717,7 @@ export const Client = (api: IK8sApi) => {
           },
         })
         .catch((err: Error) => {
-          error(`k8sCore.createNamespacedConfigMap => ${err}`)
+          error(`k8sCore.replaceNamespacedConfigMap => ${err}`)
         })
       if (configmapResult) {
         done(configmapResult.body)
