@@ -736,6 +736,50 @@ export const Client = (api: IK8sApi) => {
     return;
   };
 
+  const waitForRequiredPod = async (
+    podShortName: string,
+    _pods?: V1PodList
+  ) => {
+    try {
+      let podName: string | undefined;
+
+      if (_pods) {
+        podName = _pods.items.find((pod) =>
+          pod.metadata!.name!.includes(podShortName)
+        )?.metadata?.name;
+      } else {
+        podName = await getPods()
+          .then(
+            (pods) =>
+              pods.items.find((pod) =>
+                pod?.metadata?.name?.includes(podShortName)
+              )?.metadata!.name
+          )
+          .catch((err) => {
+            throw new Error(`waitForRequiredPod.getPods => ${err}`);
+          });
+      }
+      if (podName) {
+        await waitForPodReady(podName).catch((err) => {
+          throw new Error(`waitForRequiredPod.waitForPodReady => ${err}`);
+        });
+      } else {
+        throw new Error(`${podShortName} pod not found`);
+      }
+    } catch (err) {
+      throw err;
+    }
+  };
+
+  const waitForPods = async (podShortNames: string[]) => {
+    const pods = await getPods();
+    for await (const podShortName of podShortNames) {
+      await waitForRequiredPod(podShortName, pods).catch((err) => {
+        throw new Error(`waitForPods.waitForRequiredPod => ${err}`);
+      });
+    }
+  };
+
   return {
     configMapExists,
     createConfigmap,
@@ -773,7 +817,9 @@ export const Client = (api: IK8sApi) => {
     streamLog,
     updateConfigmap,
     updateSecret,
+    waitForPods,
     waitForPodReady,
+    waitForRequiredPod,
   };
 };
 
