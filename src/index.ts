@@ -554,6 +554,7 @@ export const Client = (api: IK8sApi) => {
       return
     }
   }
+
   const streamLog = async (
     podName: string,
     namespace: string,
