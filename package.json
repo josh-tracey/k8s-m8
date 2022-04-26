@@ -1,6 +1,6 @@
 {
-  "name": "@adriftdev/k8s-m8",
-  "version": "0.5.5",
+  "name": "k8s-m8",
+  "version": "0.1.0",
   "description": "Kubernetes Api Wrapper Library",
   "main": "./build/index.js",
   "types": "./build/index.d.ts",
