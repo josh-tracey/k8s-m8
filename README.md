@@ -1,23 +1,36 @@
 ## k8s-m8
 
-### Example
+### Install
 
-Create some secets and some configmaps from some files 
+```bash
+npm install k8s-m8
+```
+or 
+
+```bash
+yarn add k8s-m8
+```
+
+
+### Getting started
+
+#### Examples
+
+Create some secets and some configmaps from some files, using default kubeconfig from env variable 
 
 ```typescript
 
 import * as fs from 'fs'
-import { IK8Agent, k8sAgent } from '@adriftdev/k8s-m8'
+import { IK8Agent, k8sAgent } from 'k8s-m8'
 import { KubeConfig } from '@kubernetes/client-node'
 
 const kubeConfig = process.env.KUBECONFIG
 
 export let k8sClient: IK8Agent | undefined
 
-
-if (kubeConfig && exists(kubeConfig)) {
+if (kubeConfig) {
   const k8config = new KubeConfig()
-  k8config.loadFromFile(kubeConfig)
+  k8config.loadDefault()
   k8sClient = k8sAgent(k8config)
 }
 
