@@ -1,10 +1,11 @@
 {
   "name": "k8s-m8",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Kubernetes Api Wrapper Library",
   "main": "./build/index.js",
   "types": "./build/index.d.ts",
   "author": "Joshua Tracey <joshua.tracey@gmail.com>",
+  "repository": "git://github.com/josh-tracey/k8s-m8",
   "license": "MIT",
   "scripts": {
     "compile": "rm -rf ./build && yarn tsc"
