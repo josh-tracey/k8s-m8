@@ -26,7 +26,6 @@ import {
 } from '@kubernetes/client-node'
 
 
-
 import * as k8s from '@kubernetes/client-node'
 import { Context } from '@kubernetes/client-node/dist/config_types'
 import Case = require('case')
