@@ -1,6 +1,6 @@
 {
   "name": "k8s-m8",
-  "version": "0.1.2",
+  "version": "0.1.3-beta.2",
   "description": "Kubernetes Api Wrapper Library",
   "main": "./build/index.js",
   "types": "./build/index.d.ts",

@@ -11,7 +11,7 @@ import {
   V1DeploymentList,
   V1Job,
   V1JobList,
-  V1Namespace,
+  V1NamespaceList,
   V1Pod,
   V1PodList,
   V1Scale,
@@ -24,7 +24,6 @@ import {
   V1StatefulSet,
   V1StatefulSetList,
 } from '@kubernetes/client-node'
-
 
 import * as k8s from '@kubernetes/client-node'
 import { Context } from '@kubernetes/client-node/dist/config_types'
@@ -127,7 +126,7 @@ export const Client = (api: IK8sApi) => {
       }
     })
   }
- 
+
   const execShell = (
     podName: string,
     shell: string = 'bash',
@@ -178,7 +177,7 @@ export const Client = (api: IK8sApi) => {
   }
 
   const getNamespaces = () => {
-    return new Promise<V1Namespace>(async (done, error) => {
+    return new Promise<V1NamespaceList>(async (done, error) => {
       const namespacesResult = await api.k8sCore
         .listNamespace()
         .catch((err: Error) => {
@@ -727,6 +726,84 @@ export const Client = (api: IK8sApi) => {
     })
   }
 
+  const createSecretFromStream = (
+    name: string,
+    stream: Readable,
+    _namespace?: string
+  ) => {
+    return new Promise<V1Secret>(async (done, error) => {
+      let _data = ''
+      try {
+        for await (const chunk of stream) {
+          _data += chunk.toString()
+        }
+      } catch (e) {
+        error(e)
+      }
+      const secretResult = await api.k8sCore
+        .createNamespacedSecret(_namespace || namespace, {
+          data: { [name]: Buffer.from(_data, 'utf-8').toString('base64') },
+          metadata: {
+            name: Case.kebab(name),
+            namespace: _namespace || namespace,
+          },
+        })
+        .catch((err: Error) => {
+          error(`k8sCore.createNamespacedSecret => ${err}`)
+        })
+      if (secretResult) {
+        done(secretResult.body)
+      }
+    })
+  }
+
+  const updateSecretFromStream = (
+    name: string,
+    stream: Readable,
+    _namespace?: string
+  ) => {
+    return new Promise<V1Secret>(async (done, error) => {
+      let _data = ''
+      try {
+        for await (const chunk of stream) {
+          _data += chunk.toString()
+        }
+      } catch (e) {
+        error(e)
+      }
+      const secretResult = await api.k8sCore
+        .replaceNamespacedSecret(Case.kebab(name), _namespace || namespace, {
+          data: { [name]: Buffer.from(_data, 'utf-8').toString('base64') },
+          metadata: {
+            name: Case.kebab(name),
+            namespace: _namespace || namespace,
+          },
+        })
+        .catch((err: Error) => {
+          error(`k8sCore.replaceNamespacedSecret => ${err}`)
+        })
+      if (secretResult) {
+        done(secretResult.body)
+      }
+    })
+  }
+
+  const createOrUpdateSecretFromStream = async (
+    name: string,
+    stream: Readable,
+    _namespace?: string
+  ) => {
+    if (!(await secretExists(name, _namespace))) {
+      return createSecretFromStream(name, stream, _namespace).catch((e) => {
+        throw `createSecretFromStream: ${e}`
+      })
+    } else {
+      return updateSecretFromStream(name, stream, _namespace).catch((e) => {
+        throw `updateSecretFromStream: ${e}`
+      })
+    }
+  }
+
   const createOrUpdateConfigmapFromStream = async (
     name: string,
     data: { filename: string; stream: Readable }[],
@@ -919,13 +996,25 @@ export const Client = (api: IK8sApi) => {
     }
   }
 
+  const getEnvironmentVariables = async (
+    deploymentName: string,
+    _namespace: string
+  ) => {
+    const deployment = await getDeployment(deploymentName, _namespace)
+    const env = deployment.spec?.template.spec?.containers[0].env
+    return env
+  }
+
   return {
     configMapExists,
     createConfigmap,
     createConfigmapFromStream,
     createOrUpdateConfigmapFromStream,
     createOrUpdateSecret,
+    createOrUpdateSecretFromStream,
+    createRole,
     createSecret,
+    createSecretFromStream,
     deleteResource,
     execShell,
     getAllDeployments,
@@ -938,6 +1027,7 @@ export const Client = (api: IK8sApi) => {
     getDeployment,
     getDeploymentDetails,
     getDeployments,
+    getEnvironmentVariables,
     getJob,
     getJobs,
     getNamespaces,
@@ -961,6 +1051,7 @@ export const Client = (api: IK8sApi) => {
     updateConfigmap,
     updateConfigmapFromStream,
     updateSecret,
+    updateSecretFromStream,
     waitForPodReady,
     waitForPods,
     waitForRequiredPod,
