@@ -1120,8 +1120,9 @@ export const getK8sApis = (k8config: k8s.KubeConfig) => {
   }
 }
 
+export type IK8sClient = ReturnType<typeof Client>
 export type IK8sApi = ReturnType<typeof getK8sApis>
-export type IK8Agent = ReturnType<typeof k8sAgent>
+export type IK8sAgent = ReturnType<typeof k8sAgent>
 export declare type ResourceType =
   | 'pods'
   | 'namespaces'
